@@ -31,6 +31,14 @@ struct Grid {
         colors = {dark_grey, green, red, orange, yellow, purple, cyan, blue};
     }
 
+    void reset() {
+        for (int row = 0; row < num_rows; row++) {
+            for (int col = 0; col < num_cols; col++) {
+                grid[row][col] = 0;
+            }
+        }
+    }
+
     void print() {
         for (int row = 0; row < num_rows; row++) {
             for (int col = 0; col < num_cols; col++) {
@@ -58,11 +66,49 @@ struct Grid {
         if (row >= 0 && row < num_rows && col >= 0 && col < num_cols) return false;
         return true;
     }
+
+    bool is_cell_empty(int row, int col) {
+        if (grid[row][col] == 0) return true;
+        return false;
+    }
+
+    int clear_full_rows() {
+        int completed = 0;
+        for (int row = num_rows - 1; row >= 0; row--) {
+            if (is_row_full(row)) {
+                clear_row(row);
+                completed++;
+            } else if (completed > 0) {
+                move_row_down(row, completed);
+            }
+        } 
+        return completed;
+    }
 private:
     int num_rows;
     int num_cols;
     int cell_size;
     std::vector<Color> colors;
+
+    bool is_row_full(int row) {
+        for (int col = 0; col < num_cols; col++) {
+            if (grid[row][col] == 0) return false;
+        }
+        return true;
+    }
+
+    void clear_row(int row) {
+        for (int col = 0; col < num_cols; col++) {
+            grid[row][col] = 0;
+        }
+    }
+
+    void move_row_down(int row, int n) {
+        for (int col = 0; col < num_cols; col++) {
+            grid[row + n][col] = grid[row][col];
+            grid[row][col] = 0;
+        }
+    }
 };
 
 struct Position {
@@ -208,6 +254,7 @@ struct ZBlock : public Block {
 
 struct Game {
     Game() {
+        running = true;
         grid = Grid();
         blocks = get_all_blocks();
         current_block = get_random_block();
@@ -235,6 +282,11 @@ struct Game {
 
     void handle_input() {
         int key = GetKeyPressed();
+        if (!running) {
+            reset();
+            running = true;
+        }
+
         switch (key) {
         case KEY_LEFT:
             move_block_left();
@@ -254,18 +306,28 @@ struct Game {
     }
 
     void move_block_left() {
+        if (!running) return;
         current_block.move(0, -1);
-        if (is_block_outside()) current_block.move(0, 1);
+        if (is_block_outside() || !block_fits()) {
+            current_block.move(0, 1);
+        }
     }
 
     void move_block_right() {
+        if (!running) return;
         current_block.move(0, 1);
-        if (is_block_outside()) current_block.move(0, -1);
+        if (is_block_outside() || !block_fits()) {
+            current_block.move(0, -1);
+        }
     }
 
     void move_block_down() {
+        if (!running) return;
         current_block.move(1, 0);
-        if (is_block_outside()) current_block.move(-1, 0);
+        if (is_block_outside() || !block_fits()) {
+            current_block.move(-1, 0);
+            lock_block();
+        }
     }
 
     bool is_block_outside() {
@@ -279,15 +341,58 @@ struct Game {
     }
 
     void rotate_block() {
+        if (!running) return;
         current_block.rotate();
         if (is_block_outside()) current_block.undo_rotate();
     }
+
+    void lock_block() {
+        std::vector<Position> tiles = current_block.get_cell_positions();
+        for (Position item : tiles) {
+            grid.grid[item.row][item.col] = current_block.id;
+        }
+        current_block = next_block;
+        if (!block_fits()) {
+            running = false;
+            return;
+        }
+        next_block = get_random_block();
+        grid.clear_full_rows();
+    }
+
+    bool block_fits() {
+        std::vector<Position> tiles = current_block.get_cell_positions();
+        for (Position item : tiles) {
+            if (!grid.is_cell_empty(item.row, item.col)) return false;
+        }
+        return true;
+    }
+
+    void reset() {
+        grid.reset();
+        blocks = get_all_blocks(); 
+        current_block = get_random_block();
+        next_block = get_random_block();
+    }
 private:
+    bool running;
     Grid grid;
     std::vector<Block> blocks;
     Block current_block;
     Block next_block;
 };
+
+static double last_update_time = 0;
+
+bool event_triggered(double internal)
+{
+    double current_time = GetTime();
+    if (current_time - last_update_time >= internal) {
+        last_update_time = current_time;
+        return true;
+    }
+    return false;
+}
 
 int main() {
     srand((int)time(0));
@@ -300,6 +405,7 @@ int main() {
     while (!WindowShouldClose()) {
         // Updating
         game.handle_input();
+        if (event_triggered(0.02)) game.move_block_down();
 
         // Drawing
         BeginDrawing();
