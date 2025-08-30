@@ -4,15 +4,16 @@
 #include <random>
 #include <raylib.h>
 
-static constexpr Color dark_blue = {44,  44 , 127, 255};
-static constexpr Color dark_grey = {26 , 31 , 40 , 255};
-static constexpr Color green     = {47 , 230, 23 , 255};
-static constexpr Color red       = {232, 18 , 18 , 255};
-static constexpr Color orange    = {226, 116, 17 , 255};
-static constexpr Color yellow    = {237, 234, 4  , 255};
-static constexpr Color purple    = {166, 0  , 247, 255};
-static constexpr Color cyan      = {21 , 204, 209, 255};
-static constexpr Color blue      = {13 , 64 , 216, 255};
+static constexpr Color dark_blue  = {44 , 44 , 127, 255};
+static constexpr Color light_blue = {59 , 85 , 162, 255}; 
+static constexpr Color dark_grey  = {26 , 31 , 40 , 255};
+static constexpr Color green      = {47 , 230, 23 , 255};
+static constexpr Color red        = {232, 18 , 18 , 255};
+static constexpr Color orange     = {226, 116, 17 , 255};
+static constexpr Color yellow     = {237, 234, 4  , 255};
+static constexpr Color purple     = {166, 0  , 247, 255};
+static constexpr Color cyan       = {21 , 204, 209, 255};
+static constexpr Color blue       = {13 , 64 , 216, 255};
 
 struct Grid {
     int grid[20][10];
@@ -53,8 +54,8 @@ struct Grid {
             for (int col = 0; col < num_cols; col++) {
                 int cell_value = grid[row][col];
                 DrawRectangle(
-                        col*cell_size+1, 
-                        row*cell_size+1, 
+                        col*cell_size+11,
+                        row*cell_size+11,
                         cell_size-1, 
                         cell_size-1, 
                         colors[cell_value]);
@@ -132,12 +133,12 @@ struct Block {
         col_offset = 0;
     }
 
-    void draw() {
+    void draw(int offset_x, int offset_y) {
         std::vector<Position> tiles = get_cell_positions();
         for (Position item : tiles) {
             DrawRectangle(
-                    item.col*cell_size+1, 
-                    item.row*cell_size+1, 
+                    item.col*cell_size+offset_x,
+                    item.row*cell_size+offset_y,
                     cell_size-1, 
                     cell_size-1, 
                     colors[id]);
@@ -253,12 +254,42 @@ struct ZBlock : public Block {
 };
 
 struct Game {
+    bool running;
+    int score;
+    Music music;
+
     Game() {
+        score = 0;
         running = true;
         grid = Grid();
         blocks = get_all_blocks();
         current_block = get_random_block();
         next_block = get_random_block();
+        InitAudioDevice();
+        music = LoadMusicStream("assets/music.mp3");
+        PlayMusicStream(music);
+        rotate_sound = LoadSound("assets/rotate.mp3");
+        clear_sound = LoadSound("assets/clear.mp3");
+    }
+
+    void update_score(int lines_cleared, int move_down_points) {
+        switch (lines_cleared) {
+        case 1:
+            score += 100;
+            break;
+        case 2:
+            score += 300;
+            break;
+        case 3:
+            score += 500;
+            break;
+        case 4:
+            score += 700;
+            break;
+        default:
+            break;
+        }
+        score += move_down_points;
     }
 
     Block get_random_block() {
@@ -277,12 +308,23 @@ struct Game {
 
     void draw() {
         grid.draw();
-        current_block.draw();
+        current_block.draw(11, 11);
+        switch (next_block.id) {
+        case 3: 
+            next_block.draw(255, 290);
+            break;
+        case 4:
+            next_block.draw(255, 280);
+            break;
+        default:
+            next_block.draw(270, 270);
+            break;
+        }
     }
 
     void handle_input() {
         int key = GetKeyPressed();
-        if (!running) {
+        if (!running && key != 0) {
             reset();
             running = true;
         }
@@ -296,6 +338,7 @@ struct Game {
             break;
         case KEY_DOWN:
             move_block_down();
+            update_score(0, 1);
             break;
         case KEY_UP:
             rotate_block();
@@ -343,7 +386,11 @@ struct Game {
     void rotate_block() {
         if (!running) return;
         current_block.rotate();
-        if (is_block_outside()) current_block.undo_rotate();
+        if (is_block_outside() || !block_fits()) {
+            current_block.undo_rotate();
+        } else {
+            PlaySound(rotate_sound);
+        }
     }
 
     void lock_block() {
@@ -357,7 +404,11 @@ struct Game {
             return;
         }
         next_block = get_random_block();
-        grid.clear_full_rows();
+        int cleared_rows = grid.clear_full_rows();
+        if (cleared_rows > 0) {
+            PlaySound(clear_sound);
+            update_score(cleared_rows, 0);
+        }
     }
 
     bool block_fits() {
@@ -373,13 +424,15 @@ struct Game {
         blocks = get_all_blocks(); 
         current_block = get_random_block();
         next_block = get_random_block();
+        score = 0;
     }
 private:
-    bool running;
     Grid grid;
     std::vector<Block> blocks;
     Block current_block;
     Block next_block;
+    Sound rotate_sound;
+    Sound clear_sound;
 };
 
 static double last_update_time = 0;
@@ -397,19 +450,37 @@ bool event_triggered(double internal)
 int main() {
     srand((int)time(0));
 
-    InitWindow(300, 600, "My Tetris Game");
+    InitWindow(500, 620, "My Tetris Game");
     SetTargetFPS(60);
+
+    Font font = LoadFontEx("assets/monogram.ttf", 64, NULL, 0);
 
     Game game = Game();
 
     while (!WindowShouldClose()) {
         // Updating
+        UpdateMusicStream(game.music);
         game.handle_input();
-        if (event_triggered(0.02)) game.move_block_down();
+        if (event_triggered(0.2)) game.move_block_down();
 
         // Drawing
         BeginDrawing();
         ClearBackground(dark_blue);
+
+        DrawTextEx(font, "Score", {355, 15}, 38, 2, WHITE);
+        DrawTextEx(font, "Next", {365, 175}, 38, 2, WHITE);
+        if (!game.running) {
+            DrawTextEx(font, "GAME OVER", {320, 450}, 38, 2, WHITE);
+        }
+
+        DrawRectangleRounded({320, 55, 170, 60}, 0.3, 6, light_blue);
+
+        char score_text[10];
+        sprintf(score_text, "%d", game.score);
+        Vector2 text_size = MeasureTextEx(font, score_text, 38, 2);
+        DrawTextEx(font, score_text, {320 + (170 - text_size.x) / 2, 65}, 38, 2, WHITE);
+
+        DrawRectangleRounded({320, 215, 170, 180}, 0.3, 6, light_blue);
         game.draw();
         EndDrawing();
     }
